@@ -5,6 +5,7 @@ Press q or Esc in either window to quit.
 import argparse
 import sys
 
+import camera  # first: sets up the camera driver before cv2 is used
 import cv2
 
 import board_view
@@ -50,12 +51,9 @@ def main():
                   "or run with --no-serial.")
             return 1
 
-    cap = cv2.VideoCapture(args.camera)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-    if not cap.isOpened():
-        print(f"Could not open camera {args.camera}. Try another number, e.g. --camera "
-              f"{0 if args.camera else 1}.")
+    cap = camera.open_camera(args.camera)
+    if cap is None:
+        print(camera.camera_help(args.camera))
         link.close()
         return 1
 
@@ -64,9 +62,9 @@ def main():
     lx, ly = config.PANEL_W // 2, config.PANEL_H // 2
     try:
         while True:
-            ok, frame = cap.read()
+            ok, frame = camera.read_frame(cap)
             if not ok:
-                print("Camera stopped sending frames.")
+                print("Camera stopped sending frames.\n" + camera.camera_help(args.camera))
                 break
             if config.MIRROR:
                 frame = cv2.flip(frame, 1)

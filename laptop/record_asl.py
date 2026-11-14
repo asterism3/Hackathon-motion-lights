@@ -8,6 +8,7 @@ Samples are appended to asl_data.csv, so you can record more later in several se
 import argparse
 import sys
 
+import camera  # first: sets up the camera driver before cv2 is used
 import cv2
 
 import asl
@@ -23,9 +24,9 @@ def main():
     letters = [l.upper() for l in args.letters]
 
     from tracker import HandTracker, draw_hand
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened():
-        print(f"Could not open camera {args.camera}. Try another number with --camera.")
+    cap = camera.open_camera(args.camera)
+    if cap is None:
+        print(camera.camera_help(args.camera))
         return 1
     tracker = HandTracker()
     total = 0
@@ -33,9 +34,11 @@ def main():
         for letter in letters:
             rows, recording = [], False
             while len(rows) < args.samples:
-                ok, frame = cap.read()
+                ok, frame = camera.read_frame(cap)
                 if not ok:
-                    print("Camera stopped sending frames.")
+                    asl.append_samples(rows)          # keep what was recorded so far
+                    total += len(rows)
+                    print("Camera stopped sending frames.\n" + camera.camera_help(args.camera))
                     return 1
                 if config.MIRROR:                    # same as main.py, or left/right gets swapped
                     frame = cv2.flip(frame, 1)
