@@ -8,7 +8,7 @@ Samples are appended to asl_data.csv, so you can record more later in several se
 import argparse
 import sys
 
-import camera  # first: sets up the camera driver before cv2 is used
+import camera
 import cv2
 
 import asl

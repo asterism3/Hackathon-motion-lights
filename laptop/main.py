@@ -5,7 +5,7 @@ Press q or Esc in either window to quit.
 import argparse
 import sys
 
-import camera  # first: sets up the camera driver before cv2 is used
+import camera
 import cv2
 
 import board_view

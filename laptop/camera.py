@@ -1,38 +1,34 @@
-"""Opens the webcam reliably, especially on Windows.
+"""Opens the webcam.
 
-Windows has two camera drivers in OpenCV. The default one (Media Foundation, "MSMF") is
-slow to start and often fails with "can't grab frame". DirectShow usually just works,
-so on Windows we try DirectShow first, then MSMF, and keep whichever delivers a picture.
-Import this module before cv2 is used anywhere, so the setting below takes effect.
+Uses OpenCV's default camera driver first, exactly like the original main.py did, and
+gives the camera a few seconds to send its first picture (Windows cameras can be slow
+to start). Only if that fails does it try DirectShow on Windows as a fallback.
 """
-import os
 import sys
 import time
 
-# Stops MSMF's slow (and failure-prone) hardware start-up if we do end up using it.
-os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+import cv2
 
-import cv2  # noqa: E402
-
-import config  # noqa: E402
+import config
 
 
 def open_camera(index=config.CAMERA_INDEX):
     """Returns an opened cv2.VideoCapture that has delivered at least one frame, or None."""
+    attempts = [("default", None)]
     if sys.platform == "win32":
-        backends = [("DirectShow", cv2.CAP_DSHOW), ("Media Foundation", cv2.CAP_MSMF)]
-    else:
-        backends = [("default", cv2.CAP_ANY)]
-    for name, backend in backends:
-        cap = cv2.VideoCapture(index, backend)
+        attempts.append(("DirectShow", cv2.CAP_DSHOW))
+    for name, backend in attempts:
+        cap = cv2.VideoCapture(index) if backend is None else cv2.VideoCapture(index, backend)
         if cap.isOpened():
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-            ok, _ = read_frame(cap, retries=20)   # some cameras open but never send a picture
+            ok, _ = read_frame(cap, retries=150)  # up to ~5 s for the first picture
             if ok:
-                print(f"Camera {index} opened ({name})")
+                print(f"Camera {index} opened ({name} driver)")
                 return cap
-            print(f"Camera {index} opened with {name} but sent no picture; trying next driver...")
+            print(f"Camera {index} opened with the {name} driver but sent no picture.")
+        else:
+            print(f"Camera {index} could not be opened with the {name} driver.")
         cap.release()
     return None
 

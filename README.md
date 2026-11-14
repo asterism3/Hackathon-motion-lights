@@ -22,7 +22,7 @@ webcam -> laptop/ (MediaPipe hand tracking -> gesture + x,y) --USB serial--> ESP
 ```
 laptop/                    the vision side (Python)
   main.py                  run this
-  camera.py                opens the webcam (DirectShow first on Windows)
+  camera.py                opens the webcam (default driver, DirectShow as fallback)
   config.py                every setting: port, camera, smoothing, panel size
   tracker.py               camera + MediaPipe -> landmarks   (swap this for another model)
   gestures.py              landmarks -> gesture name          (add gestures here)
