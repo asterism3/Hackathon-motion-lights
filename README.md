@@ -30,6 +30,7 @@ laptop/                    the vision side (Python)
   link.py                  USB serial to the ESP32
   frames.py                what the panel draws (twin of gesture_frames.h)
   board_view.py            on-screen copy of the LED panel
+  drawing.py               draw mode: canvas, pen, colours, clear
   asl.py                   ASL letter features + classifier
   record_asl.py            record ASL examples
   train_asl.py             train the ASL model
@@ -70,7 +71,7 @@ macOS/Linux: `python3 -m venv .venv`, then `source .venv/bin/activate`.
 python selftest.py
 ```
 
-All 15 checks should pass (1 is skipped on Windows). The first run downloads the 8 MB hand model.
+All 20 checks should pass (1 is skipped on Windows). The first run downloads the 8 MB hand model.
 
 ```bash
 python main.py --no-serial
@@ -87,6 +88,45 @@ python main.py
 
 The port is auto-detected; if it picks the wrong one, use `python main.py --port COM5`.
 Other options: `--camera 1`, `--no-board`.
+
+## Modes
+
+`main.py` runs one mode at a time. Pick it with `--mode`:
+
+| Command | What it does |
+|---|---|
+| `python main.py` | **gesture** (default): a shape for each gesture follows your hand |
+| `python main.py --mode draw` | **draw**: draw on the board with your index finger |
+| `python main.py --mode asl` | **asl**: recognise ASL letters (train first, see below) |
+
+Add `--no-serial` to any of them to run without the ESP32.
+
+## Drawing mode
+
+```bash
+python main.py --no-serial --mode draw
+```
+
+| Gesture | Action |
+|---|---|
+| point (index finger) | pen down: draw |
+| open hand | pen up: move the cursor without drawing |
+| peace | next colour (hold to keep stepping, once a second) |
+| thumbs up | previous colour |
+| fist, held for 1 second | clear the board |
+
+The blinking dot on the board is the cursor: it follows your index fingertip. The camera
+window shows pen up/down, the colour name and a swatch of it. The last colour in the
+list is the eraser. Keys (click the camera window first): `c` clears, `s` saves the
+drawing as a PNG, `q` quits.
+
+To change which gesture does what, the colours, or the hold time, edit `DRAW_ACTIONS`,
+`DRAW_PALETTE` and `CLEAR_HOLD_S` in `config.py`. If lines look wobbly, lower
+`DRAW_SMOOTHING`; if fast strokes come out short or corners look rounded, raise it.
+
+**On the real panel:** drawing shows on the laptop's on-screen board only for now. With
+the ESP32 connected, the panel shows a white dot following your fingertip. Sending the
+drawing itself to the panel is the next step.
 
 ## ASL letters
 
@@ -118,7 +158,7 @@ with the venv active (scikit-learn is in `requirements.txt`; rerun
 3. **Run.**
 
    ```bash
-   python main.py --no-serial --asl
+   python main.py --no-serial --mode asl
    ```
 
    The letter shows large in the top-right of the camera window, with the raw guess and

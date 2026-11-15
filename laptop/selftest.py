@@ -279,6 +279,101 @@ def _():
             pass
 
 
+def lit(art):
+    """Set of (x, y) pixels that are not black."""
+    ys, xs = np.nonzero(art.canvas.any(axis=2))
+    return set(zip(xs.tolist(), ys.tolist()))
+
+
+@check("draw: a fast finger still leaves a line with no gaps")
+def _():
+    from drawing import Drawing, line_points
+    art = Drawing()
+    art.update("POINT", 2, 2, 0.0)
+    art.update("POINT", 20, 9, 0.1)              # jumped 18 LEDs in one frame
+    pts = line_points(2, 2, 20, 9)
+    assert lit(art) == set(pts)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):  # every pixel touches the next one
+        assert max(abs(x1 - x0), abs(y1 - y0)) == 1
+    art.update("POINT", 40, 9, 0.2)              # off the edge of the panel: no crash
+    assert all(0 <= x < 32 and 0 <= y < 32 for x, y in lit(art))
+
+
+@check("draw: moving with the pen up draws nothing and starts a new stroke")
+def _():
+    from drawing import Drawing
+    art = Drawing()
+    art.update("POINT", 1, 1, 0.0)
+    art.update("OPEN", 15, 15, 0.1)              # pen up: move only
+    assert not art.pen_down and art.cursor == (15, 15)
+    art.update("NONE", 0, 0, 0.2)                # hand gone: cursor stays where it was
+    assert art.cursor == (15, 15)
+    art.update("POINT", 30, 30, 0.3)
+    assert lit(art) == {(1, 1), (30, 30)}, "pen-up movement was joined into a line"
+    # The hand starting to change shape (raw gesture differs) lifts the pen at once.
+    art.update("POINT", 30, 20, 0.4, raw="FIST")
+    assert lit(art) == {(1, 1), (30, 30)}
+
+
+@check("draw: colour gestures step once, repeat when held, and wrap around")
+def _():
+    from drawing import Drawing
+    art = Drawing(repeat_s=1.0)
+    n = len(art.palette)
+    for t in (0.0, 0.1, 0.5, 0.9):               # one long PEACE: only one step...
+        art.update("PEACE", 5, 5, t)
+    assert art.color_index == 1
+    art.update("PEACE", 5, 5, 1.05)              # ...until held for the repeat time
+    assert art.color_index == 2
+    art.update("OPEN", 5, 5, 1.2)
+    art.update("THUMBS_UP", 5, 5, 1.3)
+    assert art.color_index == 1
+    for i in range(n):                           # all the way round
+        art.update("OPEN", 5, 5, 2 + i)
+        art.update("PEACE", 5, 5, 2 + i + 0.5)
+    assert art.color_index == 1
+    art.update("POINT", 3, 3, 50.0)
+    assert tuple(art.canvas[3, 3]) == art.palette[1][1], "drew in the wrong colour"
+
+
+@check("draw: clearing needs the gesture held, and happens once")
+def _():
+    from drawing import Drawing
+    art = Drawing(clear_hold_s=1.0)
+    art.update("POINT", 4, 4, 0.0)
+    art.update("FIST", 4, 4, 1.0)
+    art.update("FIST", 4, 4, 1.5)                # only half a second so far
+    assert lit(art) and 0.4 < art.clear_progress < 0.6
+    art.update("OPEN", 4, 4, 1.6)                # let go early: nothing cleared
+    assert lit(art) and art.clear_progress == 0
+    art.update("FIST", 4, 4, 2.0)
+    changes = art.update("FIST", 4, 4, 3.1)
+    assert changes == [("C",)] and not lit(art)
+    assert art.update("FIST", 4, 4, 5.0) == [], "cleared a second time during one hold"
+
+
+@check("draw: the list of changes is enough to rebuild the picture (for the ESP32)")
+def _():
+    from drawing import Drawing
+    art = Drawing(clear_hold_s=0.5)
+    copy = np.zeros((32, 32, 3), np.uint8)       # what a panel would show
+    rng = np.random.default_rng(3)
+    t = 0.0
+    for _ in range(400):
+        t += 0.1
+        g = str(rng.choice(["POINT", "POINT", "POINT", "OPEN", "PEACE", "FIST", "NONE"]))
+        for change in art.update(g, int(rng.integers(0, 32)), int(rng.integers(0, 32)), t):
+            if change[0] == "C":
+                copy[:] = 0
+            else:
+                _, x, y, colour = change
+                copy[y, x] = colour
+    assert lit(art), "test never drew anything"
+    assert np.array_equal(copy, art.canvas)
+    img = art.render(0.0)                        # cursor is drawn on a copy, not the canvas
+    assert np.array_equal(copy, art.canvas) and img.shape == (32, 32, 3)
+
+
 @check("MediaPipe hand model loads and runs")
 def _():
     try:

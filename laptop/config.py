@@ -27,6 +27,33 @@ ASL_DATA_PATH = "asl_data.csv"      # written by record_asl.py
 ASL_MODEL_PATH = "asl_model.joblib" # written by train_asl.py
 ASL_MIN_CONFIDENCE = 0.6            # below this the letter shows as "?"
 
+# --- Drawing mode (python main.py --mode draw) ---
+# The pen colours, in the order the colour gestures step through them.
+DRAW_PALETTE = [
+    ("red", (255, 0, 0)),
+    ("orange", (255, 128, 0)),
+    ("yellow", (255, 255, 0)),
+    ("green", (0, 255, 0)),
+    ("cyan", (0, 255, 255)),
+    ("blue", (0, 0, 255)),
+    ("purple", (160, 0, 255)),
+    ("white", (255, 255, 255)),
+    ("eraser", (0, 0, 0)),
+]
+# What each gesture does. Actions: "draw", "move", "next_color", "prev_color", "clear".
+# Swap the gestures around here; nothing else needs to change.
+DRAW_ACTIONS = {
+    "POINT": "draw",            # index finger out: pen down
+    "OPEN": "move",             # open hand: move the cursor without drawing
+    "PEACE": "next_color",
+    "THUMBS_UP": "prev_color",
+    "FIST": "clear",            # must be held for CLEAR_HOLD_S
+}
+CLEAR_HOLD_S = 1.0              # hold the clear gesture this long, so it can't happen by accident
+COLOR_REPEAT_S = 1.0            # holding a colour gesture steps again this often
+DRAW_SMOOTHING = 0.5            # like SMOOTHING, for draw mode: higher = follows fast strokes
+                                # better (sharper corners), lower = steadier lines
+
 # --- LED panel (must match the firmware) ---
 PANEL_W = 32
 PANEL_H = 32
