@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 
 import config
-from frames import render
 
 WINDOW = "LED board (simulated)"
 
@@ -17,14 +16,6 @@ def scale_up(rgb):
     return cv2.cvtColor(big, cv2.COLOR_RGB2BGR)
 
 
-def board_image(gesture, x, y, dist_cm):
-    return scale_up(render(gesture, x, y, dist_cm))
-
-
-def show(gesture, x, y, dist_cm):
-    cv2.imshow(WINDOW, board_image(gesture, x, y, dist_cm))
-
-
 def show_image(rgb):
-    """Show any 32x32 RGB picture on the board window (used by drawing mode)."""
+    """Show a 32x32 RGB picture in the board window."""
     cv2.imshow(WINDOW, scale_up(rgb))

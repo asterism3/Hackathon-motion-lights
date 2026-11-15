@@ -1,60 +1,36 @@
-# Hackathon motion lights
+# Hackathon motion lights: air drawing with a real pen tip
 
-Hand gestures seen by a laptop webcam drive a 32x32 RGB LED panel on an ESP32.
-An ultrasonic sensor on the ESP32 measures how far your hand is and sends it back.
+Draw on a 32x32 RGB LED panel by moving your finger in the air.
+
+Camera-only air drawing has a "Midas touch" problem: the camera can't tell when you
+mean to draw and when you're just moving your hand, so you end up pinching or posing
+to lift the pen, and it glitches. Here the two jobs are split between two sensors:
+
+- **The camera** says *where* your fingertip is.
+- **The ultrasonic sensor** says *whether the pen is touching*: push your hand towards
+  it to draw, pull back to stop.
+
+| Hand distance from the sensor | Pen | On the panel |
+|---|---|---|
+| closer than 15 cm | **down** | ink follows your fingertip |
+| 15 to 40 cm | **hover** | one blinking LED shows where you are; no ink |
+| further than 40 cm, or no hand | **idle** | nothing |
+
+Ink needs both sensors to agree: the ultrasonic sensor must say "down" *and* the camera
+must see a hand inside the drawing box.
 
 ```
-webcam -> laptop/ (MediaPipe hand tracking -> gesture + x,y) --USB serial--> ESP32 -> LED panel
-                                       ^------------- distance (cm) ----------'  (HC-SR04)
+webcam ──> laptop (Python): fingertip + pen state -> picture ──plain text──> ESP32 -> LED panel
+                     ^───────────── "D 23.4" distance, 20-40 times a second ───────┘ (ultrasonic)
 ```
 
-| Gesture       | Panel shows                                       |
-|---------------|---------------------------------------------------|
-| open hand     | green circle that follows your palm; closer = bigger |
-| fist          | red block                                         |
-| point (index) | white dot on your fingertip                       |
-| peace (2 fingers) | two yellow bars                               |
-| thumbs up     | magenta plus                                      |
-| no hand       | dim blue border                                   |
-
-## Layout
-
-```
-laptop/                    the vision side (Python)
-  main.py                  run this
-  camera.py                opens the webcam (default driver, DirectShow as fallback)
-  config.py                every setting: port, camera, smoothing, panel size
-  tracker.py               camera + MediaPipe -> landmarks   (swap this for another model)
-  gestures.py              landmarks -> gesture name          (add gestures here)
-  protocol.py              the serial message format
-  link.py                  USB serial to the ESP32
-  frames.py                what the panel draws (twin of gesture_frames.h)
-  board_view.py            on-screen copy of the LED panel
-  drawing.py               draw mode: canvas, pen, colours, clear
-  draw_link.py             sends the drawing to the ESP32
-  asl.py                   ASL letter features + classifier
-  record_asl.py            record ASL examples
-  train_asl.py             train the ASL model
-  selftest.py              checks that need no camera or ESP32
-firmware/gesture_led/      ESP32 sketch: gesture mode only
-  gesture_led.ino          panel + ultrasonic + laptop link
-  laptop_link.h            drop-in parser for any sketch
-  gesture_frames.h         what the panel draws (twin of frames.py)
-firmware/draw_led/         ESP32 sketch: gesture mode + drawing mode (upload this one to draw)
-  draw_led.ino             everything gesture_led.ino does, plus drawing
-  draw_link.h              drop-in receiver for the drawing (twin of draw_link.py)
-  laptop_link.h, gesture_frames.h   exact copies of the ones above (Arduino needs them here)
-tools/check_firmware.py    compiles the firmware headers on a PC and compares them to the laptop
-hackathon*.ino             the original test sketches, unchanged
-```
-
-Each file does one job. A new gesture touches `gestures.py`, `protocol.py` and the two
-frame files. A new output (sound, a second display) reads `gesture, x, y` in `main.py`.
-A different vision model only replaces `tracker.py`.
+The laptop does all the thinking. The ESP32 only paints the LEDs it's told to and
+reports the distance. **[PROTOCOL.md](PROTOCOL.md) is the full description for whoever
+writes the ESP32 sketch.**
 
 ## Laptop setup (Windows)
 
-Use Python 3.11, 3.12 or 3.13 (3.12 recommended). In the `laptop` folder:
+Use Python 3.11, 3.12 or 3.13 (3.12 recommended). In the `laptop` folder, once:
 
 ```bash
 py -3.12 -m venv .venv
@@ -68,185 +44,157 @@ py -3.12 -m venv .venv
 pip install -r requirements.txt
 ```
 
+Every time after that, only `.venv\Scripts\activate` is needed before running.
 macOS/Linux: `python3 -m venv .venv`, then `source .venv/bin/activate`.
 
-## Run
+Check the install (no camera or ESP32 needed):
 
 ```bash
 python selftest.py
 ```
 
-All 23 checks should pass (1 is skipped on Windows). The first run downloads the 8 MB hand model.
+All 24 checks should pass (1 is skipped on Windows).
+
+## Run
+
+Without the ESP32, to try everything on screen:
 
 ```bash
 python main.py --no-serial
 ```
 
-Camera window plus the on-screen LED board, no hardware needed. Press `q` to quit.
+With no sensor connected, the number keys fake it: **1** = pen down, **2** = hover,
+**3** = idle. Start with 2, move your finger inside the box, then press 1 to draw.
 
-With the ESP32 plugged in, close the Arduino Serial Monitor first (only one program can
-open the port), then:
+With the ESP32 plugged in (close the Arduino Serial Monitor first):
 
 ```bash
 python main.py
 ```
 
-The port is auto-detected; if it picks the wrong one, use `python main.py --port COM5`.
-Other options: `--camera 1`, `--no-board`.
+Useful options: `--camera 1` (an external webcam such as a Logitech is usually 1),
+`--port COM5`, `--pen gesture` (no sensor at all: pointing draws, any other hand shape
+hovers).
 
-## Modes
+**What you see in the camera window:**
 
-`main.py` runs one mode at a time. Pick it with `--mode`:
+- **The box** is the panel. Its top-left corner is LED (0, 0). Draw inside it. Its
+  colour shows the pen state: red = down, yellow = hover, grey = idle.
+- **Top line:** pen state and the measured distance.
+- **Bar on the right:** a depth gauge. The white mark is your hand; red, yellow and grey
+  are the down, hover and idle zones.
+- **Square, top right:** the pen colour.
+- **Second line:** colour name, brush size, cursor position, camera frames per second,
+  and sensor readings per second.
 
-| Command | What it does |
+**Keys** (click the camera window first):
+
+| Key | Does |
 |---|---|
-| `python main.py` | **gesture** (default): a shape for each gesture follows your hand |
-| `python main.py --mode draw` | **draw**: draw on the board with your index finger |
-| `python main.py --mode asl` | **asl**: recognise ASL letters (train first, see below) |
+| `q` or Esc | quit |
+| `c` | clear the drawing |
+| `s` | save the drawing as a PNG |
+| `[` `]` | shrink / grow the drawing box |
+| `p` | set the pen-down distance to where your hand is now |
+| `1` `2` `3` | with `--no-serial`: fake pen down / hover / idle |
 
-Add `--no-serial` to any of them to run without the ESP32.
+## Tuning
 
-## Drawing mode
+Everything is in `laptop/config.py`, with a comment on each line.
 
-```bash
-python main.py --no-serial --mode draw
-```
+- **Drawing box** (`DRAW_BOX_CENTER`, `DRAW_BOX_SIZE`): which part of the camera picture
+  maps to the panel. The camera picture is wide and the panel is square, so the box is
+  a square inside the picture. Smaller means less arm movement but a shakier cursor.
+  Keep the box inside the area the ultrasonic sensor can see (see PROTOCOL.md).
+- **Pen distances** (`PEN_DOWN_CM`, `PEN_IDLE_CM`): the "x" and "xx" limits. The `p` key
+  sets the first one live; copy the printed number into `config.py` to keep it.
+- **Cursor feel** (`POINTER_MIN_CUTOFF`, `POINTER_BETA`): the cursor is smoothed more
+  when your hand is slow and less when it's fast. Lower the first if it shakes when
+  still; raise the second if it trails behind fast strokes.
+- **Camera** (`CAMERA_INDEX`, `MIRROR`, `CAMERA_FPS`).
 
-| Gesture | Action |
-|---|---|
-| point (index finger) | pen down: draw |
-| open hand | pen up: move the cursor without drawing |
-| peace | next colour (hold to keep stepping, once a second) |
-| thumbs up | previous colour |
-| fist, held for 1 second | clear the board |
+## Commands: changing colour, clearing, brush size
 
-The blinking dot on the board is the cursor: it follows your index fingertip. The camera
-window shows pen up/down, the colour name and a swatch of it. The last colour in the
-list is the eraser. Keys (click the camera window first): `c` clears, `s` saves the
-drawing as a PNG, `q` quits.
+Commands work only while the pen is **up**, and a sign must be **held still** for half a
+second (one second for clear), so they can't fire by accident while drawing. A bar at
+the bottom of the camera window fills while you hold.
 
-To change which gesture does what, the colours, or the hold time, edit `DRAW_ACTIONS`,
-`DRAW_PALETTE` and `CLEAR_HOLD_S` in `config.py`. If lines look wobbly, lower
-`DRAW_SMOOTHING`; if fast strokes come out short or corners look rounded, raise it.
+**Before any ASL training,** three built-in gestures work: peace = next colour,
+thumbs up = previous colour, fist = clear.
 
-**On the real panel:** upload `firmware/draw_led/draw_led.ino` (see ESP32 below), then run
-without `--no-serial`:
+**With ASL letters,** each letter is a command, set in `ASL_COMMANDS` in `config.py`:
 
-```bash
-python main.py --mode draw
-```
+| Letter | Command | Letter | Command |
+|---|---|---|---|
+| R | red | P | purple |
+| O | orange | W | white |
+| Y | yellow | E | eraser |
+| G | green | C | clear |
+| B | blue | L | next brush size |
 
-The panel shows the drawing and the blinking cursor. If the board still has an older
-sketch on it, nothing breaks: older sketches ignore the drawing messages, and the panel
-shows a white dot following your fingertip instead.
+You only train the letters you want. In the `laptop` folder:
 
-## ASL letters
-
-You train the letter model yourself on your own hand and camera. In the `laptop` folder,
-with the venv active (scikit-learn is in `requirements.txt`; rerun
-`pip install -r requirements.txt` if you installed before it was added):
-
-1. **Record.** Start with a few letters that look different:
+1. **Record** the letters, plus one label for your normal relaxed hand:
 
    ```bash
-   python record_asl.py A B L Y
+   python record_asl.py R G B C REST
    ```
 
-   For each letter, make the sign and press SPACE to start recording. While it records,
-   move your hand a little: closer, further, slightly tilted. It saves 200 samples per
-   letter (`--samples` to change), then moves to the next letter. SPACE pauses, `n` skips
-   a letter, `q` quits. Samples are appended to `asl_data.csv`, so you can record more in
-   later sessions, or with other people's hands.
+   For each one, make the sign, click the camera window, and press SPACE. Move your
+   hand a little while it records 200 samples. `REST` has no command: it teaches the
+   model what "not a command" looks like. Recordings are added to `asl_data.csv`, so
+   you can add more letters or more samples later.
 
-2. **Train.**
+2. **Train:**
 
    ```bash
    python train_asl.py
    ```
 
-   It prints the accuracy on samples it didn't train on, and which letters get mixed up.
-   Record more of those letters and train again. It saves `asl_model.joblib`.
+   It prints the accuracy, which letters get mixed up, and which commands are now ready.
 
-3. **Run.**
+3. **Run** `python main.py`. It uses the letters automatically once a model exists.
+   `--commands gesture` goes back to the three built-in gestures.
 
-   ```bash
-   python main.py --no-serial --mode asl
-   ```
+A hand shape the model wasn't trained on is ignored, not matched to the nearest
+letter. Letters that involve movement (J, Z) won't work.
 
-   The letter shows large in the top-right of the camera window, with the raw guess and
-   confidence under the gesture line. `?` means the model is less than 60% sure
-   (`ASL_MIN_CONFIDENCE` in `config.py`). Gestures still drive the LED board as before.
+## The ESP32 side
 
-Add letters a few at a time. Letters that look alike (M, N, T, S) need more samples.
-J and Z involve movement and won't work with this single-frame model.
-`asl_data.csv` and `asl_model.joblib` can be committed so teammates can use them.
+The sketch is your team's to write. What it has to do is in **[PROTOCOL.md](PROTOCOL.md)**:
+three messages in (`P` set an LED, `C` clear, `R` set a row), one message out
+(`D` distance).
 
-## ESP32
+Two things help with that:
 
-**Full sketch:** open `firmware/gesture_led/gesture_led.ino` in the Arduino IDE, install
-**Adafruit Protomatter** from the Library Manager, and upload. Panel pins are the same as
-`hackathon_rgbbox.ino`.
+- `python panel_test.py` (in `laptop`) tests a sketch without the camera: it sends a
+  test picture and reports how fast the distance readings arrive.
+- `firmware/example_receiver/` is a small, optional example sketch. Its message handling
+  is tested on a PC against the laptop code; it has not been run on a real ESP32.
 
-**For drawing mode,** upload `firmware/draw_led/draw_led.ino` instead. It does everything
-`gesture_led.ino` does and adds drawing; the laptop tells it which mode to be in. Same
-libraries, same wiring. No existing sketch is changed: it's a separate folder.
+## Files
 
-**Already have a sketch that works?** Copy `laptop_link.h` next to it and add three lines:
-
-```cpp
-#include "laptop_link.h"   // top of the file
-LaptopLink laptop;         // under the include
-laptop.poll();             // first line of loop()
 ```
-
-Then use `laptop.gesture`, `laptop.is("OPEN")`, `laptop.x`, `laptop.y` (0..31) and
-`laptop.changed()`. `Serial.begin(115200)` must be in `setup()`. Keep `delay()`s short, or
-the panel reacts late. Send distance back with `laptop.sendDistance(cm)`.
-(It's called `laptop`, not `link`, because `link` is already a function on the ESP32.)
-
-To add drawing to a sketch that already uses `laptop_link.h`, copy `draw_link.h` next to
-it too. The steps are in the comment at the top of that file: two new lines, one changed
-line (`art.poll(laptop);` replaces `laptop.poll();`), and a few lines where the panel is drawn.
-
-### Wiring notes
-
-- **Ultrasonic pins moved.** The original `hackathon.ino` used pins 5 and 18 for the
-  HC-SR04, but the panel uses those. The full sketch uses **TRIG = 22, ECHO = 23**.
-- **ECHO is 5 V.** The ESP32 is 3.3 V. Put a divider on ECHO: 1 kΩ from ECHO to pin 23,
-  and 2 kΩ from pin 23 to GND.
-- **Panel power.** Power the panel from a 5 V supply rated 2 A or more, not the laptop's
-  USB port. Keep brightness low when testing.
-
-## Protocol
-
-One text line per message, 115200 baud. Anything else on the line is ignored by both
-sides, so debug `Serial.println`s are safe.
-
-- laptop -> ESP32: `G <GESTURE> <x> <y>`, e.g. `G OPEN 12 20`. Sent on every change and
-  every 0.5 s. If the ESP32 hears nothing for 2 s it goes back to `NONE`.
-- Drawing mode adds, laptop -> ESP32 (read by `draw_link.h`; older sketches ignore them):
-  - `M DRAW` / `M GESTURE`: which mode the laptop is in, sent once a second.
-  - `P <x> <y> <r> <g> <b>`: paint one pixel. Sent the moment it changes.
-  - `C`: clear the drawing.
-  - `K <x> <y> <r> <g> <b>`: cursor position and pen colour.
-  - `R <y> <128 hex digits>`: one whole row of the drawing. The laptop re-sends one row
-    every 0.1 s (the whole picture every 3.2 s), so the panel repairs itself if a message
-    was lost or the ESP32 was restarted or plugged in late.
-- ESP32 -> laptop: `D <cm>`, e.g. `D 42.5` (`-1` = nothing in range).
-
-## Checking the firmware without hardware
-
-```bash
-python tools/check_firmware.py
+laptop/
+  main.py          run this: the loop that ties everything together
+  config.py        every setting
+  camera.py        opens the webcam
+  tracker.py       camera picture -> 21 hand points (MediaPipe)
+  pointer.py       fingertip -> steady LED position (the drawing box)
+  pen.py           ultrasonic distance -> pen down / hover / idle, and the fusion rule
+  filters.py       smoothing maths used by pointer.py and pen.py
+  drawing.py       the picture: canvas, colours, brush, cursor
+  commands.py      hold-a-sign-to-trigger logic
+  gestures.py      hand points -> gesture name (peace, fist, ...)
+  asl.py           hand points -> ASL letter
+  record_asl.py    record ASL examples        train_asl.py    train the ASL model
+  panel.py         sends only the LEDs that changed
+  protocol.py      the message formats        link.py         the USB serial port
+  board_view.py    on-screen copy of the panel
+  panel_test.py    test an ESP32 sketch without the camera
+  selftest.py      24 checks that need no hardware
+firmware/example_receiver/   optional example ESP32 sketch
+tools/check_firmware.py      tests the example's message handling on a PC (needs g++)
+PROTOCOL.md                  the laptop <-> ESP32 contract
+hackathon*.ino               the team's original test sketches, unchanged
 ```
-
-Needs `g++` (Linux/macOS, or WSL on Windows). It compiles the firmware headers with a
-stand-in Arduino core and checks that:
-
-- `laptop_link.h` reads good messages and ignores bad ones;
-- `gesture_frames.h` draws the same pixels as the laptop's on-screen board;
-- `draw_link.h`, fed a real drawing session's messages, shows exactly the laptop's
-  picture and cursor, and recovers when a third of the pixel messages are thrown away;
-- the older firmware is not disturbed by the drawing messages.
-
-It does not compile the `.ino` sketches themselves; the Arduino IDE does that when you upload.

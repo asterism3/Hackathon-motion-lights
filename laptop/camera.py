@@ -22,6 +22,8 @@ def open_camera(index=config.CAMERA_INDEX):
         if cap.isOpened():
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+            if config.CAMERA_FPS:
+                cap.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
             ok, _ = read_frame(cap, retries=150)  # up to ~5 s for the first picture
             if ok:
                 print(f"Camera {index} opened ({name} driver)")

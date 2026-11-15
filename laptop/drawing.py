@@ -1,22 +1,15 @@
-"""Drawing mode: draw on the 32x32 board by moving a finger in the air.
+"""The drawing itself: canvas, pen colour, brush and cursor.
 
-Pure logic: no camera, no serial, no windows. main.py feeds it one gesture + position
-per camera frame, and it keeps the picture. That makes it easy to test (see selftest.py).
+Pure logic: no camera, no serial, no windows. main.py tells it where the pen is and
+whether it's down; panel.py sends the resulting picture to the LED panel.
 
-The ideas, in order:
-  canvas      a 32x32 grid of colours that remembers everything drawn so far
-  cursor      where the fingertip is right now (shown as a blinking dot)
-  pen down    the "draw" gesture is held: moving the cursor leaves a line
-  pen up      any other gesture: the cursor moves but draws nothing
-  actions     what each gesture does, set in config.DRAW_ACTIONS
-
-update() also returns the list of changes it made, e.g. [("P", 12, 20, (255, 0, 0))].
-Later, sending exactly those changes to the ESP32 is all the panel needs.
+  canvas   a 32x32 grid of colours that remembers everything drawn so far
+  cursor   where the fingertip is right now (a blinking LED), or None if hidden
+  move()   pen down: leaves a line from the last position.  pen up: just moves the cursor
 """
 import numpy as np
 
 import config
-import protocol
 
 
 def line_points(x0, y0, x1, y1):
@@ -41,25 +34,16 @@ def line_points(x0, y0, x1, y1):
 
 
 class Drawing:
-    def __init__(self, w=config.PANEL_W, h=config.PANEL_H, palette=None, actions=None,
-                 clear_hold_s=config.CLEAR_HOLD_S, repeat_s=config.COLOR_REPEAT_S):
+    def __init__(self, w=config.PANEL_W, h=config.PANEL_H, palette=None):
         self.w, self.h = w, h
         self.palette = list(palette or config.DRAW_PALETTE)     # [(name, (r, g, b)), ...]
-        self.actions = dict(actions or config.DRAW_ACTIONS)     # gesture -> action name
-        self.clear_hold_s = clear_hold_s
-        self.repeat_s = repeat_s
         self.canvas = np.zeros((h, w, 3), np.uint8)
         self.color_index = 0
-        self.cursor = (w // 2, h // 2)
+        self.brush = 1
+        self.cursor = None               # (x, y), or None = hidden
         self.pen_down = False
-        self.clear_progress = 0.0        # 0..1 while the clear gesture is being held
         self._last_point = None          # where the line continues from; None = pen was up
-        self._prev_action = None
-        self._action_since = 0.0         # when the current action's gesture started
-        self._last_fired = 0.0           # when a colour change last happened
-        self._cleared = False            # so one long hold clears only once
 
-    # ---- small helpers -------------------------------------------------------------
     @property
     def color(self):
         return self.palette[self.color_index][1]
@@ -68,71 +52,79 @@ class Drawing:
     def color_name(self):
         return self.palette[self.color_index][0]
 
-    def _paint(self, x, y, changes):
-        if 0 <= x < self.w and 0 <= y < self.h and tuple(self.canvas[y, x]) != self.color:
-            self.canvas[y, x] = self.color
-            changes.append(("P", x, y, self.color))
+    # ---- the pen -------------------------------------------------------------------
+    def _stamp(self, x, y):
+        """Paint the brush at one point: brush 1 = one LED, 2 = 2x2, 3 = 3x3 centred."""
+        x0, y0 = x - (self.brush - 1) // 2, y - (self.brush - 1) // 2
+        xa, xb = max(0, x0), min(self.w, x0 + self.brush)
+        ya, yb = max(0, y0), min(self.h, y0 + self.brush)
+        if xa < xb and ya < yb:
+            self.canvas[ya:yb, xa:xb] = self.color
 
+    def move(self, x, y, pen_down):
+        """Call every frame the cursor should be visible."""
+        self.cursor = (x, y)
+        self.pen_down = pen_down
+        if pen_down:
+            start = self._last_point or (x, y)
+            for px, py in line_points(start[0], start[1], x, y):
+                self._stamp(px, py)
+            self._last_point = (x, y)
+        else:
+            self._last_point = None      # next stroke starts fresh
+
+    def hide_cursor(self):
+        """No hand, or the pen is idle: nothing to show, and the stroke ends."""
+        self.cursor = None
+        self.pen_down = False
+        self._last_point = None
+
+    # ---- commands ------------------------------------------------------------------
     def clear(self):
         self.canvas[:] = 0
         self._last_point = None
-        return [("C",)]
+
+    def set_color(self, name):
+        for i, (n, _) in enumerate(self.palette):
+            if n == name:
+                self.color_index = i
+                return True
+        return False
 
     def step_color(self, step):
         self.color_index = (self.color_index + step) % len(self.palette)
 
-    # ---- called once per camera frame ----------------------------------------------
-    def update(self, gesture, x, y, now, raw=None):
-        """gesture: the steady gesture name.  x, y: LED position of the fingertip.
-        now: time in seconds.  raw: this frame's unfiltered gesture, if known.
-        Returns the changes made this frame: ("P", x, y, (r, g, b)) and/or ("C",)."""
-        changes = []
-        action = self.actions.get(gesture)
-        if gesture != "NONE":
-            self.cursor = (x, y)
-        if action != self._prev_action:              # a new gesture just started
-            self._action_since = now
-            self._cleared = False
-        just_started = action != self._prev_action
-        self._prev_action = action
+    def set_brush(self, size):
+        self.brush = min(config.MAX_BRUSH, max(1, int(size)))
 
-        # Draw only while the hand clearly shows the draw gesture. If this frame's raw
-        # gesture already differs, the hand is changing shape: lift the pen so the
-        # finger curling away doesn't leave a stray tail.
-        raw_action = self.actions.get(raw) if raw is not None else action
-        self.pen_down = action == "draw" and raw_action == "draw"
-        if self.pen_down:
-            start = self._last_point or (x, y)
-            for px, py in line_points(start[0], start[1], x, y):
-                self._paint(px, py, changes)
-            self._last_point = (x, y)
-        else:
-            self._last_point = None                  # next stroke starts fresh
+    def apply(self, action):
+        """Runs an action string from config (e.g. "color:blue"). Returns a short
+        description for the screen, or None if the action is unknown."""
+        name, _, arg = action.partition(":")
+        if name == "color" and self.set_color(arg):
+            return self.color_name
+        if name in ("next_color", "prev_color"):
+            self.step_color(1 if name == "next_color" else -1)
+            return self.color_name
+        if name == "clear":
+            self.clear()
+            return "cleared"
+        if name == "brush" and arg.isdigit():
+            self.set_brush(int(arg))
+            return f"brush {self.brush}"
+        if name == "next_brush":
+            self.set_brush(self.brush % config.MAX_BRUSH + 1)
+            return f"brush {self.brush}"
+        return None
 
-        if action in ("next_color", "prev_color"):
-            # Once when the gesture starts, then again every repeat_s while it's held.
-            if just_started or now - self._last_fired >= self.repeat_s:
-                self.step_color(1 if action == "next_color" else -1)
-                self._last_fired = now
-
-        if action == "clear":
-            held = now - self._action_since
-            self.clear_progress = 0.0 if self._cleared else min(1.0, held / self.clear_hold_s)
-            if not self._cleared and held >= self.clear_hold_s:
-                changes += self.clear()
-                self._cleared = True
-        else:
-            self.clear_progress = 0.0
-        return changes
-
+    # ---- what the panel shows ------------------------------------------------------
     def render(self, now):
-        """The picture to show: the canvas with the cursor blinking on top."""
+        """The canvas with the cursor blinking on top."""
         img = self.canvas.copy()
-        if int(now * 4) % 2 == 0:                    # on for 1/4 s, off for 1/4 s
+        if self.cursor is not None and int(now * config.CURSOR_BLINK_HZ * 2) % 2 == 0:
             cx, cy = self.cursor
-            # Blink in the pen colour; use white if that wouldn't be visible there.
-            # (Compared in the panel's colour format, so the ESP32 picks the same one.)
-            pen = protocol.rgb565(self.color)
-            visible = pen != 0 and protocol.rgb565(img[cy, cx]) != pen
+            # Blink in the pen colour; white where that wouldn't show (the eraser, or
+            # an LED that already has the pen colour, such as the ink just drawn).
+            visible = self.color != (0, 0, 0) and tuple(img[cy, cx]) != self.color
             img[cy, cx] = self.color if visible else (255, 255, 255)
         return img
