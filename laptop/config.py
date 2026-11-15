@@ -53,6 +53,8 @@ CLEAR_HOLD_S = 1.0              # hold the clear gesture this long, so it can't 
 COLOR_REPEAT_S = 1.0            # holding a colour gesture steps again this often
 DRAW_SMOOTHING = 0.5            # like SMOOTHING, for draw mode: higher = follows fast strokes
                                 # better (sharper corners), lower = steadier lines
+DRAW_RESYNC_ROW_S = 0.1         # re-send one row of the drawing to the panel this often
+                                # (the whole picture every 3.2 s), so the panel self-repairs
 
 # --- LED panel (must match the firmware) ---
 PANEL_W = 32

@@ -374,6 +374,106 @@ def _():
     assert np.array_equal(copy, art.canvas) and img.shape == (32, 32, 3)
 
 
+class FakePanel:
+    """Does what firmware/draw_led/draw_link.h does with each message: a pretend LED panel."""
+
+    def __init__(self):
+        self.canvas = np.zeros((32, 32), np.uint16)      # RGB565, like the real panel
+        self.cursor = None
+        self.mode = "GESTURE"
+        self.gesture_lines = 0
+
+    def feed(self, data):
+        for line in data.decode("ascii").splitlines():
+            parts = line.split()
+            try:
+                if parts[0] == "M" and parts[1] in protocol.MODES:
+                    self.mode = parts[1]
+                elif parts == ["C"]:
+                    self.canvas[:] = 0
+                elif parts[0] in ("P", "K") and len(parts) == 6:
+                    x, y, r, g, b = (int(v) for v in parts[1:])
+                    if parts[0] == "P":
+                        self.canvas[y, x] = protocol.rgb565((r, g, b))
+                    else:
+                        self.cursor = (x, y, protocol.rgb565((r, g, b)))
+                elif parts[0] == "R" and len(parts[2]) == 128:
+                    self.canvas[int(parts[1])] = [int(parts[2][i:i + 4], 16) for i in range(0, 128, 4)]
+                elif protocol.parse_gesture(line):
+                    self.gesture_lines += 1
+            except (IndexError, ValueError):
+                pass
+
+
+def as565(canvas):
+    return np.array([[protocol.rgb565(c) for c in row] for row in canvas], np.uint16)
+
+
+def scribble(sender, art, panel, frames, t0=0.0, lose_every=0):
+    """Random drawing for `frames` frames, then 4 s holding still. Feeds the panel as it goes."""
+    rng = np.random.default_rng(5)
+    sent = [0]
+
+    class Wire:                                   # the cable, optionally dropping messages
+        def write(self, data):
+            sent[0] += 1
+            lossy = lose_every and data[:1] in (b"P", b"C") and sent[0] % lose_every == 0
+            if not lossy:
+                panel.feed(data)
+    sender.link = Wire()
+    t = t0
+    for i in range(frames + 120):
+        t += 1 / 30
+        g = str(rng.choice(["POINT"] * 5 + ["OPEN", "PEACE", "NONE"])) if i < frames else "OPEN"
+        sender.send_changes(art.update(g, int(rng.integers(0, 32)), int(rng.integers(0, 32)), t))
+        sender.tick(art, t)
+    return t
+
+
+@check("draw link: the panel gets the picture, cursor and pen colour")
+def _():
+    from draw_link import DrawSender
+    from drawing import Drawing
+    art, panel = Drawing(), FakePanel()
+    panel.canvas[:] = 0x1234                      # leftovers from an earlier drawing
+    sender = DrawSender(panel)
+    panel.feed(protocol.encode_mode("DRAW"))
+    sender.link = type("W", (), {"write": lambda self, d: panel.feed(d)})()
+    sender.start()                                # must wipe the leftovers
+    assert not panel.canvas.any()
+    scribble(sender, art, panel, frames=200)
+    assert art.canvas.any() and panel.mode == "DRAW"
+    assert np.array_equal(panel.canvas, as565(art.canvas))
+    assert panel.cursor == (art.cursor[0], art.cursor[1], protocol.rgb565(art.color))
+
+
+@check("draw link: the panel repairs itself after lost messages or an ESP32 restart")
+def _():
+    from draw_link import DrawSender
+    from drawing import Drawing
+    art, panel = Drawing(), FakePanel()
+    sender = DrawSender(panel)
+    t = scribble(sender, art, panel, frames=200, lose_every=3)   # every 3rd pixel message lost
+    assert np.array_equal(panel.canvas, as565(art.canvas)), "lost pixels were never repaired"
+    panel.canvas[:] = 0                                          # ESP32 unplugged and restarted
+    panel.cursor = None
+    scribble(sender, art, panel, frames=0, t0=t)                 # 4 s of doing nothing
+    assert np.array_equal(panel.canvas, as565(art.canvas)), "restart was never repaired"
+    assert panel.cursor is not None
+
+
+@check("draw messages are safe for older firmware (not mistaken for gesture messages)")
+def _():
+    art_colour = (255, 128, 0)
+    for line in (protocol.encode_mode("DRAW"), protocol.encode_pixel(3, 4, art_colour),
+                 protocol.encode_clear(), protocol.encode_cursor(3, 4, art_colour),
+                 protocol.encode_row(31, [art_colour] * 32)):
+        text = line.decode()
+        assert text.endswith("\n") and len(text) < 160      # fits the firmware's line buffer
+        assert protocol.parse_gesture(text) is None and protocol.parse_distance(text) is None
+    assert protocol.rgb565((255, 255, 255)) == 0xFFFF and protocol.rgb565((255, 0, 0)) == 0xF800
+
+
 @check("MediaPipe hand model loads and runs")
 def _():
     try:

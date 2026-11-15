@@ -87,6 +87,13 @@ def main():
         link.close()
         return 1
 
+    sender = None
+    if art is not None:
+        from draw_link import DrawSender
+        sender = DrawSender(link)
+        link.send_mode("DRAW")
+        sender.start()
+
     tracker = HandTracker()
     filt = gestures.GestureFilter(
         config.STABLE_FRAMES, config.DRAW_SMOOTHING if art is not None else config.SMOOTHING)
@@ -112,11 +119,14 @@ def main():
 
             link.poll()
             if art is not None:
-                art.update(gesture, lx, ly, now, raw=raw)
-                # The real panel can't show the drawing yet (that's the next step), so
-                # for now it shows a white dot that follows your fingertip.
+                link.send_mode("DRAW")
+                sender.send_changes(art.update(gesture, lx, ly, now, raw=raw))
+                sender.tick(art, now)
+                # For boards still running the older firmware, which ignores the drawing
+                # messages: keep a white dot following the fingertip, as before.
                 link.send("NONE" if gesture == "NONE" else "POINT", lx, ly)
             else:
+                link.send_mode("GESTURE")
                 link.send(gesture, lx, ly)
 
             if lm is not None:
@@ -145,7 +155,7 @@ def main():
             if key in (ord("q"), 27):
                 break
             if art is not None and key == ord("c"):
-                art.clear()
+                sender.send_changes(art.clear())
             if art is not None and key == ord("s"):
                 name = time.strftime("drawing_%Y%m%d_%H%M%S.png")
                 cv2.imwrite(name, board_view.scale_up(art.canvas))

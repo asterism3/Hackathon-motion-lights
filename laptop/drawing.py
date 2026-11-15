@@ -16,6 +16,7 @@ Later, sending exactly those changes to the ESP32 is all the panel needs.
 import numpy as np
 
 import config
+import protocol
 
 
 def line_points(x0, y0, x1, y1):
@@ -130,6 +131,8 @@ class Drawing:
         if int(now * 4) % 2 == 0:                    # on for 1/4 s, off for 1/4 s
             cx, cy = self.cursor
             # Blink in the pen colour; use white if that wouldn't be visible there.
-            visible = self.color != (0, 0, 0) and tuple(img[cy, cx]) != self.color
+            # (Compared in the panel's colour format, so the ESP32 picks the same one.)
+            pen = protocol.rgb565(self.color)
+            visible = pen != 0 and protocol.rgb565(img[cy, cx]) != pen
             img[cy, cx] = self.color if visible else (255, 255, 255)
         return img

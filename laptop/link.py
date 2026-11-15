@@ -13,6 +13,12 @@ class NullLink:
     def send(self, gesture, x, y):
         pass
 
+    def send_mode(self, mode):
+        pass
+
+    def write(self, data):
+        pass
+
     def poll(self):
         pass
 
@@ -51,6 +57,8 @@ class SerialLink:
         self._buf = b""
         self._last = None
         self._last_sent_at = 0.0
+        self._mode = None
+        self._mode_sent_at = 0.0
 
     def send(self, gesture, x, y):
         """Sends only when something changed, plus a heartbeat every HEARTBEAT_S."""
@@ -59,6 +67,17 @@ class SerialLink:
         if msg != self._last or now - self._last_sent_at >= config.HEARTBEAT_S:
             self.ser.write(protocol.encode_gesture(gesture, x, y))
             self._last, self._last_sent_at = msg, now
+
+    def send_mode(self, mode):
+        """Tells the ESP32 which mode we're in: on change, and once a second after that."""
+        now = time.monotonic()
+        if mode != self._mode or now - self._mode_sent_at >= 1.0:
+            self.ser.write(protocol.encode_mode(mode))
+            self._mode, self._mode_sent_at = mode, now
+
+    def write(self, data):
+        """Sends ready-made message bytes (used by drawing mode)."""
+        self.ser.write(data)
 
     def poll(self):
         """Reads whatever the ESP32 sent, without blocking. Updates distance_cm."""

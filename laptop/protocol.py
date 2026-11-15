@@ -5,6 +5,18 @@ ESP32 -> laptop, one line:   D <centimetres>\\n          e.g.  "D 42.5"
 
 x and y are LED coordinates, 0..31. Any other line is ignored by both sides,
 so debug prints from the ESP32 don't break anything.
+
+Drawing mode adds these laptop -> ESP32 lines (read by firmware/draw_led/draw_link.h).
+Older firmware that doesn't know them just ignores them:
+
+  M <MODE>                 "M DRAW" or "M GESTURE": which mode the laptop is in
+  P <x> <y> <r> <g> <b>    paint one pixel, colour 0..255 each
+  C                        clear the drawing
+  K <x> <y> <r> <g> <b>    cursor position and pen colour
+  R <y> <128 hex digits>   one whole row of the drawing: 32 pixels, 4 hex digits each
+                           (RGB565, the panel's own colour format). The laptop keeps
+                           re-sending rows in the background, so the panel fixes itself
+                           if a message was lost or the ESP32 was restarted.
 """
 
 GESTURES = ("NONE", "OPEN", "FIST", "POINT", "PEACE", "THUMBS_UP")
@@ -40,3 +52,38 @@ def parse_distance(line: str):
         return float(parts[1])
     except ValueError:
         return None
+
+
+# ---------------- drawing mode ----------------
+MODES = ("GESTURE", "DRAW")
+
+
+def rgb565(color):
+    """(r, g, b) 0..255 -> the 16-bit colour the panel uses. Same formula as the firmware."""
+    r, g, b = (int(v) for v in color)
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
+
+def encode_mode(mode: str) -> bytes:
+    if mode not in MODES:
+        raise ValueError(f"unknown mode {mode!r}")
+    return f"M {mode}\n".encode("ascii")
+
+
+def encode_pixel(x, y, color) -> bytes:
+    r, g, b = (int(v) for v in color)
+    return f"P {int(x)} {int(y)} {r} {g} {b}\n".encode("ascii")
+
+
+def encode_clear() -> bytes:
+    return b"C\n"
+
+
+def encode_cursor(x, y, color) -> bytes:
+    r, g, b = (int(v) for v in color)
+    return f"K {int(x)} {int(y)} {r} {g} {b}\n".encode("ascii")
+
+
+def encode_row(y, row) -> bytes:
+    """row: 32 colours (r, g, b)."""
+    return (f"R {int(y)} " + "".join(f"{rgb565(c):04x}" for c in row) + "\n").encode("ascii")
